@@ -1,0 +1,540 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Group xmlns:fx="http://ns.adobe.com/mxml/2009" 
+		 xmlns:s="library://ns.adobe.com/flex/spark" 
+		 xmlns:mx="library://ns.adobe.com/flex/mx">
+	<fx:Declarations>
+		<!-- 将非可视元素（例如服务、值对象）放在此处 -->
+	</fx:Declarations>
+	
+	<fx:Script>
+		<![CDATA[
+			import com.esri.ags.Graphic;
+			import com.esri.ags.geometry.Geometry;
+			import com.esri.ags.geometry.MapPoint;
+			import com.esri.ags.geometry.Polyline;
+			import com.esri.ags.layers.GraphicsLayer;
+			import com.esri.ags.renderers.Renderer;
+			
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			
+			import org.osmf.events.TimeEvent;
+			
+			[Bindable]
+			[Embed(source="com/tpy/image/start.png")]
+			private var i_start:Class;			
+			[Bindable]
+			[Embed(source="com/tpy/image/pause.png")]
+			private var i_pause:Class;
+			[Bindable]
+			[Embed(source="com/tpy/image/last.png")]
+			private var i_fallBack:Class;
+			[Bindable]
+			[Embed(source="com/tpy/image/next.png")]
+			private var i_goForward:Class; 
+			[Binable]
+			[Embed(source="com/tpy/image/replay.png")]
+			private var i_repaly:Class;
+			
+			private var _timer:Timer;
+			
+			//是否回放
+			private var _isReplay:Boolean=false;
+			[Bindable]
+			private var _timeStops:int;
+			[Bindable]
+			private var _currentTimeStop:int;
+			private var __currentTimeStopIncrease:Boolean;
+			//移动时间间隔
+			private var _movingRate:int=1000;			
+			private var _graphicSet:Array;
+			//每一个时间站点绘制的图形数
+			private var _graphicCountPerTimeStop:int;
+			
+			private var _graphicsLayer:GraphicsLayer;
+			private var _renderer:Renderer;
+			
+			//添加图形键值对
+			private var _dictionary:Dictionary=new Dictionary();
+
+			public function get renderer():Renderer
+			{
+				return _renderer;
+			}
+			
+			/**
+			 * 渲染样式 
+			 */
+			public function set renderer(value:Renderer):void
+			{
+				_renderer = value;
+			}
+
+			public function get graphicsLayer():GraphicsLayer
+			{
+				return _graphicsLayer;
+			}
+			/**
+			 * 图形图层 
+			 */
+			public function set graphicsLayer(value:GraphicsLayer):void
+			{
+				_graphicsLayer = value;
+				if(_renderer!=null)
+				{
+					_graphicsLayer.renderer=_renderer;
+				}
+			}
+
+			public function get graphicSet():Array
+			{
+				return _graphicSet;
+			}
+
+			/**
+			 * 查询结果，需要播放的图形数组 
+			 */
+			public function set graphicSet(value:Array):void
+			{
+				_graphicSet = value;
+			}
+
+			public function get movingRate():int
+			{
+				return _movingRate;
+			}
+
+			/**
+			 *轨迹播放时间频率 
+			 */
+			public function set movingRate(value:int):void
+			{
+				_movingRate = value;
+			}
+
+			public function get timeStops():int
+			{
+				return _timeStops;
+			}
+			
+			/**
+			 * 时间站点总数
+			 */
+			private function set timeStops(value:int):void
+			{
+				_timeStops=value;
+			}
+			
+			public function get currentTimeStop():int
+			{
+				return _currentTimeStop;
+			}
+			
+			/**
+			 * 当前时间站点
+			 */
+			public function set currentTimeStop(value:int):void
+			{
+				
+				_currentTimeStop=value;	
+				trace("设置时间一次....");
+				
+				currentTimeStopChangeHandler();
+				
+				//分派当前时间站点变化时间，外部调用
+				var timerSliderEvent:TimerSliderEvent=new TimerSliderEvent(TimerSliderEvent.TIMESTOPCHANGE,value);
+				this.dispatchEvent(timerSliderEvent);
+				
+			}
+			
+			
+			/**
+			 * 时间站点改变事件
+			 */
+			private function currentTimeStopChangeHandler():void
+			{
+				if(graphicSet==null)
+				{
+					return;
+				}
+				
+				trace("当前站点: "+_currentTimeStop.toString());
+				if(_currentTimeStop>=_timeStops || _currentTimeStop<=0)
+				{
+					_timer.stop();
+					trace("当前时间为站点总数起点或终点，timer暂停...");
+				}				
+				
+				
+				//开始绘制图形
+				var startIndex:int;
+				var endIndex:int;
+				
+				if(_isReplay)
+				{
+					removeGraphic(_currentTimeStop+1);
+					
+				}
+				else
+				{
+					if(_currentTimeStop==_timeStops && _timeStops*_graphicCountPerTimeStop<_graphicSet.length)
+					{
+						startIndex=(_currentTimeStop-1)*_graphicCountPerTimeStop;
+						endIndex=_graphicSet.length;
+					}
+					else
+					{
+						startIndex=(_currentTimeStop-1)*_graphicCountPerTimeStop;
+						endIndex=(_currentTimeStop)*_graphicCountPerTimeStop;
+					}
+					addGraphics(startIndex,endIndex);
+				}	
+			}
+			
+			/**
+			 * 
+			 * 根据时间站点移除图形
+			 * @param currentStop:int 当前时间站点
+			 */
+			private function removeGraphic(currentStop:int):void
+			{
+				if(_dictionary==null)
+				{
+					return;
+				}
+				
+				var graphicArr:Array=_dictionary[currentStop] as Array;
+			 
+				for(var i:int=graphicArr.length-1;i>=0;i--)
+				{
+					var g:Graphic=graphicArr[i] as Graphic;	
+					if(g.geometry is MapPoint)
+					{						
+						var index:int=getCurrentGraphicIndex(g);
+						changeGraphicState(index-1,0.05,1);	
+					}								
+					_graphicsLayer.remove(g);
+				}
+				
+			}
+			/**
+			 * 
+			 * 改变当前图形属性
+			 * @param index:int 当前图形索引
+			 * @param alpha:Number alpha改变量
+			 * @param size:Number size该变量
+			 * 
+			 */
+			private function changeGraphicState(index:int,alpha:Number,size:Number):void
+			{
+				 if(index<0)
+				 {
+					 return;
+				 }
+				
+				var currentGraphic:Graphic=graphicSet[index] as Graphic;
+				//currentGraphic.attributes={TS_LATEST:"TRUE",TS_ALPHA:1,TS_SIZE:18};
+				currentGraphic.attributes["TS_LATEST"]="TRUE";
+				currentGraphic.attributes["TS_ALPHA"]=1;
+				currentGraphic.attributes["TS_SIZE"]=18;
+				for(var i:int=index-1;i>=0;i--)
+				{
+					var last:Graphic=Graphic(_graphicSet[i]);
+					last.attributes.TS_LATEST="FALSE";
+					last.attributes.TS_ALPHA+=alpha;
+					last.attributes.TS_SIZE+=size;
+				}	
+				
+				_graphicsLayer.map.centerAt(currentGraphic.geometry as MapPoint);
+				
+			}
+			
+			private function getCurrentGraphicIndex(currentGraphic:Graphic):int
+			{
+				return graphicSet.indexOf(currentGraphic);
+			}
+			private function onTimer(event:TimerEvent):void
+			{
+				trace("执行timer事件...");
+				
+				if(_isReplay)
+				{
+					trace("轨迹回放一次...");
+					this.currentTimeStop--;
+					
+				}
+				else
+				{
+					trace("轨迹播放一次...");
+					this.currentTimeStop++;
+				}
+					
+			}
+			
+			/**
+			 * 
+			 * 根据时间间隔与单位创建时间站点
+			 * @param timeExtent:TimeExtent 时间属性
+			 * @param timeInterval:Number 时间间隔
+			 * @param timeIntervalUnits:String 时间间隔单位
+			 * 
+			 */
+			public function createTimeStopsByTimeInterval(timeExtent:MyTimeExtent, timeInterval:Number, timeIntervalUnits:String):void
+			{
+				trace("计算时间站点总数..");
+				if(timeExtent==null || isNaN(timeInterval)|| timeIntervalUnits=="")
+				{
+					trace("不是合格的参数..");
+					return;
+				}
+				var space:Number=getTimeSpaceUseTimeIntervalUnits(timeExtent,timeIntervalUnits);
+				
+				if(space!=-1)
+				{
+					_timeStops=(space/timeInterval)+1;					
+					trace("时间站点总数: "+_timeStops.toString());
+					createGraphicCountPerTimeStop();
+				}
+			}
+			
+			/**
+			 * 计算每个站点绘制图形数			 
+			 * 
+			 */
+			private function createGraphicCountPerTimeStop():void
+			{
+				trace("计算每个时间站点绘制个数..");
+				if(_graphicSet==null || _graphicSet.length<=0)
+				{
+					trace("还未设置需要绘制的图形组..");
+					return;
+					//mx.controls.Alert.show("还未设置需要绘制的图形组..","错误");
+				}
+				_graphicCountPerTimeStop=_graphicSet.length/_timeStops;
+				trace("每个时间站点绘制个数: "+_graphicCountPerTimeStop);
+			}
+			
+			/**
+			 * 
+			 * 根据时间间隔单位与时间属性得到时间距
+			 * @param timeExtent:TimeExtent 时间属性
+			 * @param timeIntervalUnits:String 时间间隔单位
+			 * @return 时间距:Number
+			 * 
+			 */
+			private function getTimeSpaceUseTimeIntervalUnits(timeExtent:MyTimeExtent, timeIntervalUnits:String):Number
+			{
+				switch(timeIntervalUnits)
+				{
+					case "years":
+						return (timeExtent.endDate.getFullYear()-timeExtent.startDate.getFullYear());
+					case "months":
+						return (timeExtent.endDate.getMonth()-timeExtent.startDate.getMonth());
+					case "days":
+						return (timeExtent.endDate.getDate()-timeExtent.startDate.getDate());
+					case "hours":
+						return (timeExtent.endDate.getHours()-timeExtent.startDate.getHours());
+					case "minutes":
+						return (timeExtent.endDate.getMinutes()-timeExtent.startDate.getMinutes());
+					case "seconds":
+						return (timeExtent.endDate.getSeconds()-timeExtent.startDate.getSeconds());
+					default :
+						trace("无法识别的时间单位..");
+						return -1;
+				}
+			}
+
+			/**
+			 * 
+			 * 添加图形
+			 * @param startIndex:int 开始索引
+			 * @param endIndex:int 终止索引
+			 * 
+			 */
+			private function addGraphics(startIndex:int,endIndex:int):void
+			{
+				trace("开始绘制第 "+startIndex+" 个至第 "+endIndex+"个图形..");
+				
+				addMarkerGraphic(startIndex,endIndex);
+			}
+			
+			/**
+			 * 
+			 * 添加点图形
+			 * @param startIndex:int 开始索引
+			 * @param endIndex:int 终止索引
+			 * 
+			 */
+			private function addMarkerGraphic(startIndex:int,endIndex:int):void
+			{
+				var arr:Array=new Array();
+				var graphic:Graphic
+				for(var i:int=startIndex;i<endIndex;i++)
+				{
+					
+					if(i<_graphicSet.length && i>0)
+					{
+						 var line:Graphic=addLineGraphic(Graphic(_graphicSet[i-1]),Graphic(_graphicSet[i]));
+						 
+						 arr.push(line);
+						trace("画第 "+(i-1)+" 与第"+i+" 个点之间的线成功..");
+					}
+					
+					graphic=Graphic(_graphicSet[i]);
+					
+					changeGraphicState(i,-0.5,-1);
+					
+					arr.push(graphic);
+					_graphicsLayer.add(graphic);
+					var geo:Geometry= graphic.geometry;
+					var p:MapPoint=geo as MapPoint;
+					_graphicsLayer.map.centerAt(p); 
+					trace("画第 "+i+" 个点成功..");				
+					
+				}
+				_dictionary[_currentTimeStop]=arr;
+			}
+			
+			/**
+			 * 
+			 * 添加线图形
+			 * @param startGraphic:Graphic 起始点
+			 * @param endGraphic:Graphic 终止点
+			 * 
+			 */
+			private function addLineGraphic(startGraphic:Graphic,endGraphic:Graphic):Graphic
+			{
+				var polyLine:Polyline=new Polyline();
+				var graphic:Graphic=new Graphic();
+				var array:Array=[startGraphic.geometry as MapPoint,endGraphic.geometry as MapPoint];
+				polyLine.addPath(array);
+				graphic.geometry=polyLine;
+				_graphicsLayer.add(graphic);
+			
+				return graphic;
+			}
+			
+			
+			
+			//播放
+			protected function btnStart_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				
+				if(_timeStops<1)
+				{
+					trace("站点数量不够，不执行...");
+					return ;
+				}
+				
+				if(_timer==null)
+				{
+					
+					_timer=new Timer(_movingRate,0);
+					_timer.addEventListener(TimerEvent.TIMER,onTimer);
+					
+				}
+				
+				if(_timer.running && !_isReplay)
+				{
+					trace("轨迹播放..计时器暂停...");
+					
+					btnStart.setStyle("icon",i_start);
+					_timer.stop();
+				
+				}
+				else
+				{
+					trace("轨迹播放..计时器开始...");
+					_isReplay=false;
+					btnStart.setStyle("icon",i_pause);
+					
+					_timer.start();
+					
+				}				
+			}
+			
+			//回放
+			protected function btnReplay_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				
+				if(_timer==null)
+				{
+					return;
+				}
+				
+				if(_timer.running && _isReplay)
+				{
+					trace("轨迹回放..计时器暂停...");
+					btnReplay.setStyle("icon",i_repaly);
+					_timer.stop();
+					
+				}
+				else
+				{
+					trace("轨迹回放..计时器开始...");
+					_isReplay=true;
+					
+					btnReplay.setStyle("icon",i_pause);
+					_timer.start();	
+				}
+			}
+
+			//后退
+			protected function btnFallBack_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				if(_timer==null)
+				{
+					return ;
+				}
+				
+				if(_timer.running)
+				{
+					_timer.stop();
+				}
+				if(_currentTimeStop<=_timeStops && _currentTimeStop>0)
+				{
+					_isReplay=true;
+					this.currentTimeStop--;
+					
+				}
+			}
+
+			
+			//前进
+			protected function btnGoForward_clickHandler(event:MouseEvent):void
+			{
+				// TODO Auto-generated method stub
+				if(_timer==null)
+				{
+					return ;
+				}	
+				if(_timer.running)
+				{
+					_timer.stop();
+				}
+				if(_currentTimeStop<_timeStops && _currentTimeStop>=0)
+				{
+					_isReplay=false;
+					this.currentTimeStop++;
+				}
+			}
+
+ 
+		]]>
+	</fx:Script>
+	
+	<fx:Metadata>
+		[Event(name="timeStopChange",type="TimerSlider.TimerSliderEvent")]  
+	</fx:Metadata>
+	<mx:HBox  horizontalGap="3" verticalAlign="middle">
+		<mx:Button  id="btnStart" click="btnStart_clickHandler(event)" width="25"  icon="{i_start}"/>
+		<s:HSlider  id="sldTime" width="178" maximum="{_timeStops}" minimum="0" stepSize="1" value="@{_currentTimeStop}" />
+		<mx:Button  id="btnFallBack" width="25" click="btnFallBack_clickHandler(event)" icon="{i_fallBack}"/>
+		<mx:Button  id="btnGoForward" width="25"  click="btnGoForward_clickHandler(event)" icon="{i_goForward}"/>
+		<mx:Button  id="btnReplay"  width="25"  click="btnReplay_clickHandler(event)" icon="{i_repaly}"/>
+	</mx:HBox>
+	
+</s:Group>

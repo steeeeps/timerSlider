@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<flexLibProperties includeAllClasses="true" version="3">
+  <includeClasses/>
+  <includeResources>
+    <resourceEntry destPath="com/tpy/image/next.png" sourcePath="com/tpy/image/next.png"/>
+    <resourceEntry destPath="com/tpy/image/last.png" sourcePath="com/tpy/image/last.png"/>
+    <resourceEntry destPath="com/tpy/image/pause.png" sourcePath="com/tpy/image/pause.png"/>
+    <resourceEntry destPath="com/tpy/image/replay.png" sourcePath="com/tpy/image/replay.png"/>
+    <resourceEntry destPath="com/tpy/image/start.png" sourcePath="com/tpy/image/start.png"/>
+  </includeResources>
+  <namespaceManifests/>
+</flexLibProperties>
